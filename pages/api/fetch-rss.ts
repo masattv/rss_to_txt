@@ -7,88 +7,100 @@ import { decode } from 'html-entities'
 import * as iconv from 'iconv-lite'
 
 type Data = {
-  zip: string  // base64 encoded
+  zip?: string
+  error?: string
 }
+
+const parser = new Parser({
+  customFields: {
+    item: [
+      ['content:encoded', 'content'],
+      ['description', 'description'],
+    ],
+  },
+})
 
 async function fetchArticleContent(url: string): Promise<string> {
   try {
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+      },
     })
 
     // Shift-JISでデコード
     const html = iconv.decode(response.data, 'Shift_JIS')
     const $ = cheerio.load(html)
-    
+
     // 不要な要素を削除
-    $('script, style, iframe, .advertisement, .related-articles, .article-footer, .article-header, .article-meta, .article-sidebar').remove()
-    
+    $('script, style, .article-footer, .article-header, .article-meta, .article-sidebar, .ad, .related-articles').remove()
+
     // 記事本文を取得
     const content = $('#cmsBody')
-      .find('p')  // 段落要素のみを取得
-      .map((_, el) => {
-        const text = $(el).text().trim()
-        return text ? decode(text) : ''  // HTMLエンティティをデコード
-      })
-      .get()  // 配列に変換
-      .filter(text => text.length > 0)  // 空の段落を除去
-      .join('\n\n')  // 段落間に空行を入れて結合
-    
-    return content || '本文を取得できませんでした'
-  } catch (e) {
-    console.error('記事取得エラー:', e)
+      .find('p')
+      .map((_, el) => $(el).text().trim())
+      .get()
+      .filter(text => text.length > 0)
+      .join('\n\n')
+
+    return decode(content)
+  } catch (error) {
+    console.error('記事の取得に失敗:', error)
     return '記事の取得に失敗しました'
   }
 }
 
 export default async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<Data | { error: string }>
+  res: NextApiResponse<Data>
 ) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' })
+  }
+
   const { url } = req.body
+
   if (!url) {
-    return res.status(400).json({ error: 'URL を指定してください' })
+    return res.status(400).json({ error: 'URL is required' })
   }
 
   try {
-    const parser = new Parser()
     const feed = await parser.parseURL(url)
     const zip = new JSZip()
 
-    // 記事を並行して取得
-    const articlePromises = feed.items.map(async (item, idx) => {
-      const title = item.title?.replace(/[\/\\?%*:|"<>]/g, '_') || `article_${idx+1}`
-      const articleContent = await fetchArticleContent(item.link || '')
-      
-      const content = [
-        `タイトル: ${item.title}`,
-        `公開日: ${item.pubDate}`,
-        `リンク: ${item.link}`,
-        '',
-        articleContent
-      ].join('\n')
-      
-      return { title, content }
+    // 記事の内容を並行して取得
+    const articles = await Promise.all(
+      feed.items.map(async (item) => {
+        const content = await fetchArticleContent(item.link || '')
+        return {
+          title: item.title || '無題',
+          date: item.isoDate || new Date().toISOString(),
+          link: item.link || '',
+          content: content,
+        }
+      })
+    )
+
+    // 各記事をZIPファイルに追加
+    articles.forEach((article) => {
+      const fileName = `${article.title.replace(/[\\/:*?"<>|]/g, '_')}.txt`
+      const content = `タイトル: ${article.title}\n\n` +
+        `公開日: ${new Date(article.date).toLocaleString('ja-JP')}\n\n` +
+        `URL: ${article.link}\n\n` +
+        `本文:\n${article.content}\n\n` +
+        `※ このファイルは私的利用に限りご利用いただけます。`
+      zip.file(fileName, content)
     })
 
-    const articles = await Promise.all(articlePromises)
-    
-    // ZIPファイルに追加
-    articles.forEach(({ title, content }) => {
-      zip.file(`${title}.txt`, content)
-    })
+    // ZIPファイルを生成
+    const zipContent = await zip.generateAsync({ type: 'nodebuffer' })
+    const base64Zip = zipContent.toString('base64')
 
-    const blob = await zip.generateAsync({ type: 'nodebuffer' })
-    const base64 = blob.toString('base64')
-    res.status(200).json({ zip: base64 })
-  } catch (e: any) {
-    console.error('RSS取得エラー:', e)
-    res.status(500).json({ error: e.message })
+    res.status(200).json({ zip: base64Zip })
+  } catch (error) {
+    console.error('Error:', error)
+    res.status(500).json({ error: 'Failed to fetch RSS feed' })
   }
 } 
