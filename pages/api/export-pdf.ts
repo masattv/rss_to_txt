@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import chromium from 'chrome-aws-lambda'
-import puppeteer from 'puppeteer-core'
+import htmlPdf from 'html-pdf-node'
 
 export default async function handler(
   req: NextApiRequest,
@@ -15,27 +14,20 @@ export default async function handler(
     return res.status(400).json({ error: 'html is required' })
   }
 
-  let browser = null
   try {
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath,
-      headless: chromium.headless,
-    })
-
-    const page = await browser.newPage()
-    await page.setContent(html, { waitUntil: 'networkidle0' })
-    const pdfBuffer = await page.pdf({
-      format: 'a4',
-      printBackground: true,
+    const options = {
+      format: 'A4',
       margin: {
         top: '20px',
         right: '20px',
         bottom: '20px',
         left: '20px',
       },
-    })
+      printBackground: true,
+    }
+
+    const file = { content: html }
+    const pdfBuffer = await htmlPdf.generatePdf(file, options)
 
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', 'attachment; filename="rss_output.pdf"')
@@ -43,7 +35,5 @@ export default async function handler(
   } catch (error) {
     console.error('PDF generation error:', error)
     res.status(500).json({ error: 'PDF generation failed' })
-  } finally {
-    if (browser) await browser.close()
   }
 } 
