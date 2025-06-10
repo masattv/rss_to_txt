@@ -11,5 +11,15 @@
       "src": "/(.*)",
       "dest": "/$1"
     }
-  ]
+  ],
+  "functions": {
+    "api/export-pdf.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "buildCommand": "npm run build",
+  "devCommand": "npm run dev",
+  "installCommand": "npm install",
+  "framework": "nextjs"
 } 
