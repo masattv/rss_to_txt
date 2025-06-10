@@ -14,7 +14,9 @@ declare module 'html-pdf-node' {
     content: string
   }
 
-  function generatePdf(file: File, options?: Options): Promise<Buffer>
+  const htmlPdf: {
+    generatePdf(file: File, options?: Options): Promise<Buffer>
+  }
 
-  export = generatePdf
+  export = htmlPdf
 } 
