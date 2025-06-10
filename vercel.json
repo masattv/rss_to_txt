@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/export-pdf.ts": {
+    "pages/api/**/*": {
       "memory": 1024,
       "maxDuration": 30
     }
